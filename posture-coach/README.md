@@ -79,6 +79,31 @@ src/
 
 This design is intentionally modular: every metric, tolerance, weight, and rule is one edit away, and new metrics (e.g. elbow angles) can be dropped in without touching the rest of the app.
 
+## Deploying
+
+The app is 100% static — **no backend is required**. Any static host that serves HTTPS works (webcam APIs require HTTPS or `localhost`).
+
+### GitHub Pages (set up in this repo)
+
+A GitHub Actions workflow at `.github/workflows/deploy-pages.yml` builds and deploys this app on every push to `main`. To enable it:
+
+1. On GitHub, go to **Settings → Pages**.
+2. Under **Build and deployment → Source**, choose **GitHub Actions**.
+3. Push to `main` (or click **Run workflow** on the Actions tab).
+4. The site will be published at `https://<your-username>.github.io/<repo-name>/`.
+
+The workflow sets `VITE_BASE_PATH=/<repo-name>/` automatically so asset URLs resolve correctly under the project-site prefix. It also copies `index.html` to `404.html` as an SPA fallback and drops a `.nojekyll` file so Pages serves the `_`-prefixed Vite assets verbatim.
+
+### Other static hosts (Vercel, Netlify, Cloudflare Pages, …)
+
+These serve at the domain root, so no base path is needed:
+
+- **Root directory**: `posture-coach`
+- **Build command**: `npm run build`
+- **Output directory**: `dist`
+
+No environment variables are required.
+
 ## Privacy
 
 - No backend, no analytics, no network calls beyond loading the pose model once.
