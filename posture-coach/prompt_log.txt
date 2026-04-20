@@ -1,0 +1,148 @@
+Posture Coach — prompt / development log
+=========================================
+
+This log captures the iterative prompts and decisions that shaped the
+project. It is not a verbatim chat transcript; it is a summary of the
+intent behind each major step so the workflow is reproducible.
+
+--------------------------------------------------------------------
+Iteration 1 — Scoping
+--------------------------------------------------------------------
+Prompt: "Read SPEC.md. Decide on the minimum viable feature set that
+satisfies every bullet in Functional Requirements (webcam, pose
+detection, analysis engine, feedback, persistence, visualization) and
+picks at least two of the optional enhancements. Produce a plan."
+
+Decisions taken:
+- Stack: React 19 + Vite 8 (fast iteration, modern), MediaPipe Pose
+  Landmarker via @mediapipe/tasks-vision (runs WASM + GPU delegate in
+  the browser, no backend), Recharts for charts, localStorage for
+  persistence.
+- Optional enhancements: calibration, CSV export, audio alerts on
+  slouch — all of which are natural extensions of the core metrics
+  and feel like features a real user would ask for within minutes of
+  using the app.
+
+--------------------------------------------------------------------
+Iteration 2 — Analysis engine first
+--------------------------------------------------------------------
+Prompt: "Before touching any UI, write the posture analysis module
+(src/lib/postureAnalysis.js). It should be self-contained, heavily
+commented, and unit testable without a DOM. Derive metrics directly
+from MediaPipe's normalized landmark coords (x,y,z,visibility).
+Produce (1) per-metric geometric values, (2) per-metric 0-100
+sub-scores, (3) one combined 0-100 score, (4) a small list of
+actionable feedback strings. Support user-specific calibration."
+
+Refinements during this iteration:
+- Flip image-y when computing angles from vertical so "up" is intuitive.
+- Add hasEnoughLandmarks() gate so downstream UI can distinguish
+  "no pose yet" from "bad posture".
+- Use a smooth exp(-t^2) penalty curve — linear penalties looked too
+  "binary" in early manual testing with synthetic landmark data.
+- Renormalise score weights when a metric (spineLean) is null so the
+  scale stays 0..100 for seated users whose hips are off-camera.
+- Export makeEMA() so both the UI and any future callers can smooth
+  in a consistent way.
+
+--------------------------------------------------------------------
+Iteration 3 — Pose detection wrapper
+--------------------------------------------------------------------
+Prompt: "Wrap MediaPipe PoseLandmarker in a tiny factory that hides the
+fileset-resolver + model-loading ceremony. The rest of the app should
+only have to call `await createPoseDetector()` and then `detect(video,
+timestamp)` each frame. Pin the model to the 'lite' float16 variant —
+quality is plenty for an upper-body posture app and it starts fast."
+
+--------------------------------------------------------------------
+Iteration 4 — Webcam loop + overlay
+--------------------------------------------------------------------
+Prompt: "Write PoseCoach.jsx. Start/stop controls, request webcam,
+requestAnimationFrame loop that calls the detector, draws the
+skeleton on a canvas overlay with the colour keyed to the current
+score, and updates three pieces of React state: live score, metrics,
+feedback. Sample the score into the active session at ~1 Hz."
+
+Issues caught and fixed:
+- Mirror the video horizontally (transform: scaleX(-1)) because users
+  expect their left hand to appear on the left.
+- Don't sample every frame — metric arrays would explode. 1 Hz keeps
+  a one-hour session well under 4 KB of JSON.
+- The landmarker must receive a monotonically increasing timestamp
+  (performance.now()) or it throws in VIDEO mode.
+
+--------------------------------------------------------------------
+Iteration 5 — Feedback panel
+--------------------------------------------------------------------
+Prompt: "Make the per-metric breakdown unmissable. Five bars (neck,
+shoulders, hunch, spine, symmetry) colour-coded good/ok/bad, plus a
+small raw-metrics grid showing the underlying angles so power users
+can see what the score is reacting to. Below that, render the current
+feedback messages with a matching severity stripe."
+
+--------------------------------------------------------------------
+Iteration 6 — Calibration
+--------------------------------------------------------------------
+Prompt: "Add a Calibrate button. For 4 seconds, collect every smoothed
+metric sample into a buffer, then buildBaseline() to average them,
+then use the result as the reference point for subsequent scoring.
+Show a progress banner during calibration so it doesn't feel frozen."
+
+--------------------------------------------------------------------
+Iteration 7 — Persistence + History view
+--------------------------------------------------------------------
+Prompt: "Design the smallest possible localStorage schema that can
+produce the charts we want. Sessions are a flat array; each session
+has id, startedAt, endedAt, duration, avgScore, samples[]. Cap at 50
+sessions and 3600 samples (1 h at 1 Hz) so we never blow quota."
+
+Then: "Build HistoryView.jsx with three charts – avg score per
+session (line), latest session timeline (multi-line: score + neck +
+shoulders + hunch), and average sub-scores all-time (bar). Add
+Export CSV and Clear history buttons."
+
+--------------------------------------------------------------------
+Iteration 8 — Polish + QoL
+--------------------------------------------------------------------
+Prompts:
+- "Add an audio alert on sustained slouch. Use WebAudio, no external
+  asset. Only trigger after ~1s of score<55 and rate-limit to every
+  8s so it's not annoying."
+- "Dark, minimal UI. Use CSS custom properties. The app should look
+  good at 1440×900 and still work down to mobile width (single
+  column, controls wrap)."
+- "Favicon: tiny SVG stick figure with the accent gradient."
+
+--------------------------------------------------------------------
+Iteration 9 — Tests + lint
+--------------------------------------------------------------------
+Prompt: "Write synthetic landmark helpers (neutralPose) and assert
+that (a) a neutral pose scores ~100, (b) a forward-head pose drops
+the neck sub-score, (c) tilted shoulders produce a 'shoulders' tip,
+(d) calibrating on a slouched pose restores the score to ~100.
+Run `node --test` + `npm run lint` and fix everything they flag."
+
+Fixes made after linting:
+- Replace useEffect(() => setState(load()), []) with lazy useState
+  initialiser in App.jsx.
+- Capture videoRef.current inside the effect body before returning
+  the cleanup (react-hooks/exhaustive-deps).
+- Remove unused `score` prop from FeedbackPanel's signature.
+
+--------------------------------------------------------------------
+Iteration 10 — Documentation
+--------------------------------------------------------------------
+Prompt: "Write README.md covering: what the app does, tech stack,
+quick start, project layout, and – most importantly – a clear
+explanation of the posture-analysis approach that a reviewer could
+follow end-to-end. Add a privacy note; this is all client-side and
+that's a genuine selling point. Also keep a prompt_log.txt (this
+file) showing the iterative workflow."
+
+--------------------------------------------------------------------
+Verification pass
+--------------------------------------------------------------------
+- `npm run lint` → clean.
+- `npm run build` → passes (one expected chunk-size warning from
+  MediaPipe + Recharts; code-splitting is a nice follow-up).
+- `npm run test` → 7/7 pass.
