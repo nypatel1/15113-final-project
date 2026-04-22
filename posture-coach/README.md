@@ -67,10 +67,9 @@ src/
 1. **Landmark gate.** Reject frames where key joints (ears, shoulders) are below `visibility` 0.5 so we never score garbage frames.
 2. **Raw metrics.**
    - `neckTilt` – angle between the shoulder-midpoint→ear-midpoint vector and vertical. 0° is ideal; positive values mean forward head (ears ahead of shoulders).
-   - `headPitch` – nose-vs-ear-line vertical offset, normalised by ear distance. ~0.3 is a level gaze; larger means the chin is tucked down toward the chest, smaller/negative means the chin is lifted. Independent of `neckTilt`: your whole head can drift forward without the nose moving relative to the ears, and you can nod down without the ears leaving the shoulder line.
+   - `headPitch` – nose-vs-ear-line vertical offset, normalised by ear distance. ~0.3 is a level gaze; larger means the chin is tucked down toward the chest, smaller/negative means the chin is lifted. This is independent of `neckTilt`: your whole head can drift forward without the nose moving relative to the ears, and you can nod down without the ears leaving the shoulder line.
    - `shoulderTilt` – angle of the left→right shoulder line vs. horizontal. 0° is level.
-   - `shoulderHunch` – vertical rise of the ears above the shoulders, divided by shoulder width. Uses only the vertical component (not the diagonal), so forward-head drift doesn't inflate it. Scored **one-sided** – only compression (shoulders creeping up toward the ears) is penalised; a longer neck than baseline means you relaxed and is a good thing.
-   - `torsoLean` – proxy for "am I leaning toward the screen". Uses the depth (z) coordinate of the shoulders, normalised by shoulder width. Positive values mean the user translated forward. Scored **one-sided** – leaning back is fine; only leaning in is penalised. Works even when hips are off-camera (which is typical for seated desk use).
+   - `shoulderHunch` – ratio of neck length to shoulder width. Shrugged shoulders compress this ratio.
    - `spineLean` – angle of the hip-mid→shoulder-mid vector vs. vertical (only when hips are visible; skipped for typical seated webcam framing).
    - `symmetry` – how close the left/right shoulder and hip heights are (scaled to shoulder width).
 3. **Calibration.** Averaging metrics over a short window produces a per-user baseline. Every deviation is measured relative to that baseline, so the score adapts to your body geometry and camera angle.
