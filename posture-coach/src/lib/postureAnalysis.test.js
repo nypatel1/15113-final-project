@@ -29,17 +29,18 @@ function neutralPose({
   shoulderWidth = 0.26,
   earDistance = 0.1,
   noseDy = 0,
+  shoulderZ = 0, // MediaPipe z: negative = closer to camera (leaning in)
 } = {}) {
   const lm = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 0.9 }));
   const midX = 0.5;
   const shY = 0.5;
   const earY = shY - neckLen;
 
-  lm[LM.LEFT_SHOULDER] = { x: midX - shoulderWidth / 2, y: shY, z: 0, visibility: 0.95 };
+  lm[LM.LEFT_SHOULDER] = { x: midX - shoulderWidth / 2, y: shY, z: shoulderZ, visibility: 0.95 };
   lm[LM.RIGHT_SHOULDER] = {
     x: midX + shoulderWidth / 2,
     y: shY + shoulderDy,
-    z: 0,
+    z: shoulderZ,
     visibility: 0.95,
   };
 
@@ -154,4 +155,53 @@ test("level head + forward head are independently distinguishable", () => {
     Math.abs(tuckedOnly.neckTilt) < 2,
     `neckTilt should be stable under head-pitch only, got ${tuckedOnly.neckTilt}`,
   );
+});
+
+test("leaning forward (negative shoulder z) is penalised by back sub-score", () => {
+  const leaning = neutralPose({ shoulderZ: -0.15 });
+  const m = computeMetrics(leaning);
+  const { subs, feedback } = scorePosture(m, DEFAULT_BASELINE);
+  assert.ok(m.torsoLean > 0.4, `expected positive torsoLean, got ${m.torsoLean}`);
+  assert.ok(subs.back < 70, `expected low back sub-score, got ${subs.back}`);
+  assert.ok(
+    feedback.some((f) => f.metric === "back" && /leaning in/i.test(f.message)),
+    `expected "leaning in" feedback, got ${JSON.stringify(feedback)}`,
+  );
+});
+
+test("leaning back does not penalise the back sub-score", () => {
+  const leaningBack = neutralPose({ shoulderZ: 0.15 });
+  const m = computeMetrics(leaningBack);
+  const { subs } = scorePosture(m, DEFAULT_BASELINE);
+  assert.equal(subs.back, 100, `expected leaning back to score 100, got ${subs.back}`);
+});
+
+test("relaxed shoulders (longer neck than baseline) never lose hunch points", () => {
+  // Calibrate with a slightly-shrugged posture (short neck).
+  const shrugged = computeMetrics(
+    neutralPose({ neckLen: 0.08, earDistance: 0.1 }),
+  );
+  const baseline = buildBaseline([shrugged, shrugged, shrugged]);
+
+  // Then relax: neck gets longer.
+  const relaxed = computeMetrics(
+    neutralPose({ neckLen: 0.14, earDistance: 0.1 }),
+  );
+  const { subs } = scorePosture(relaxed, baseline);
+  assert.equal(
+    subs.hunch,
+    100,
+    `expected relaxed shoulders to keep hunch at 100, got ${subs.hunch}`,
+  );
+});
+
+test("shrugged shoulders (shorter neck than baseline) are penalised", () => {
+  const baseline = DEFAULT_BASELINE;
+  // Force the neck to be much shorter than baseline (0.45 * 0.26 ≈ 0.12).
+  const shrugged = computeMetrics(
+    neutralPose({ neckLen: 0.04, shoulderWidth: 0.26 }),
+  );
+  const { subs, feedback } = scorePosture(shrugged, baseline);
+  assert.ok(subs.hunch < 70, `expected shrugged hunch sub-score low, got ${subs.hunch}`);
+  assert.ok(feedback.some((f) => f.metric === "hunch"));
 });

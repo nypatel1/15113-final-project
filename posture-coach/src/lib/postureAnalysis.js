@@ -22,9 +22,19 @@
  *                       what catches "head nodded forward onto chest".
  *   - shoulderTilt    : roll of the shoulder line vs. horizontal (deg).
  *                       0 ≈ shoulders level.
- *   - shoulderHunch   : vertical distance ear→shoulder, normalised by
- *                       shoulder width. Smaller = shoulders shrugged up.
- *   - spineLean       : tilt of the torso (hip→shoulder) vs. vertical.
+ *   - shoulderHunch   : vertical component of the neck (ears above
+ *                       shoulders), normalised by shoulder width. Only
+ *                       *compression* of this value is penalised – if
+ *                       your neck gets LONGER than baseline that's
+ *                       fine (you've relaxed your shoulders), we only
+ *                       flag shoulders creeping up toward the ears.
+ *   - torsoLean       : proxy for "am I leaning toward the screen". Uses
+ *                       the shoulder-landmarks' depth (z) from MediaPipe
+ *                       to detect the user translating forward, even
+ *                       when hips aren't in frame. Positive = leaning in.
+ *   - spineLean       : tilt of the torso (hip→shoulder) vs. vertical
+ *                       (only when hips are visible; seated users will
+ *                       usually have this as null).
  *   - symmetry        : 0..1, 1 = perfectly symmetric left/right heights.
  *
  * The scoring function is deliberately simple and tweakable – every
@@ -160,10 +170,35 @@ export function computeMetrics(landmarks) {
   if (shoulderTilt > 90) shoulderTilt -= 180;
   if (shoulderTilt < -90) shoulderTilt += 180;
 
-  // Shoulder hunch: how tall is the neck compared to shoulder width.
-  // A relaxed neck is roughly 35–55% of shoulder width tall.
-  const neckLength = len(neckVec);
-  const shoulderHunch = neckLength / shoulderWidth; // bigger = longer neck
+  // Shoulder hunch: how tall is the neck *vertically*, as a fraction of
+  // shoulder width. Using only the vertical component (not the diagonal)
+  // means forward-head drift doesn't artificially inflate this metric –
+  // only actual shoulder lift / neck compression changes it.
+  //
+  // Relaxed necks read ~0.35–0.55. Shrugged shoulders compress this.
+  // We intentionally DO NOT penalise "more than baseline" at scoring
+  // time – if your neck gets longer after calibration that just means
+  // you relaxed, which is a good thing.
+  const neckVerticalRise = -neckVec.y; // ears are above shoulders so -y > 0
+  const shoulderHunch = Math.max(0, neckVerticalRise) / shoulderWidth;
+
+  // Torso lean (NEW): detect "leaning into the screen" using the z
+  // coordinate of the shoulders. MediaPipe's z is a relative depth
+  // measurement with the hips as the origin (for world landmarks) or
+  // the midpoint of the hips inferred from the pose (for normalized
+  // image landmarks). The scale roughly matches x, so we normalise by
+  // shoulder width to get something camera-invariant.
+  //
+  // Convention: z grows *toward* the camera (more negative when the
+  // shoulders translate forward). We flip the sign so `torsoLean`
+  // reads POSITIVE when the user leans in, which matches the intuitive
+  // penalty direction.
+  let torsoLean = null;
+  const zL = lSh.z;
+  const zR = rSh.z;
+  if (Number.isFinite(zL) && Number.isFinite(zR)) {
+    torsoLean = -((zL + zR) / 2) / shoulderWidth;
+  }
 
   // Symmetry: compare vertical heights of paired joints.
   // 1.0 means perfectly level; decreases with any imbalance.
@@ -188,6 +223,7 @@ export function computeMetrics(landmarks) {
     headPitch,        // ratio, ~0.3 = level; larger = chin tucked down
     shoulderTilt,     // degrees, 0 = level
     shoulderHunch,    // ratio, ~0.45 = relaxed
+    torsoLean,        // ratio or null; larger = leaning in toward screen
     spineLean,        // degrees or null
     symmetry,         // 0..1
     hipsVisible,
@@ -210,6 +246,23 @@ function gradedScore(deviation, tolerance, falloff) {
   return Math.max(0, Math.round(100 * Math.exp(-t * t)));
 }
 
+/**
+ * One-sided version of `gradedScore`. Only penalises deviation in the
+ * given direction:
+ *   sign = +1 → penalise `deviation > tolerance`
+ *   sign = -1 → penalise `deviation < -tolerance`
+ * The opposite direction always scores 100. Useful for metrics where
+ * drift in one direction means "better posture" (e.g. a longer neck
+ * means shoulders are relaxed, not worse).
+ */
+function gradedScoreOneSided(deviation, tolerance, falloff, sign = 1) {
+  const signed = sign * deviation;
+  if (signed <= tolerance) return 100;
+  const d = signed - tolerance;
+  const t = d / (falloff - tolerance);
+  return Math.max(0, Math.round(100 * Math.exp(-t * t)));
+}
+
 // ---------- calibration-aware scoring ---------------------------
 
 const DEFAULT_BASELINE = {
@@ -217,6 +270,7 @@ const DEFAULT_BASELINE = {
   headPitch: 0.3,
   shoulderTilt: 0,
   shoulderHunch: 0.45,
+  torsoLean: 0,
   spineLean: 0,
 };
 
@@ -231,6 +285,7 @@ export function buildBaseline(metricsSamples) {
     "headPitch",
     "shoulderTilt",
     "shoulderHunch",
+    "torsoLean",
     "spineLean",
   ];
   const acc = Object.fromEntries(keys.map((k) => [k, 0]));
@@ -267,11 +322,27 @@ export function scorePosture(metrics, baseline = DEFAULT_BASELINE) {
       3,
       15,
     ),
-    hunch: gradedScore(
+    // One-sided: only penalise "hunch smaller than baseline", i.e. the
+    // neck getting SHORTER (shoulders creeping up toward the ears). A
+    // taller neck than baseline means the user relaxed their shoulders
+    // and should keep a perfect score.
+    hunch: gradedScoreOneSided(
       metrics.shoulderHunch - baseline.shoulderHunch,
       0.05,
       0.25,
+      -1,
     ),
+    // One-sided: only penalise "leaning in toward the screen". Leaning
+    // back against the chair is fine (or in fact desirable).
+    back:
+      metrics.torsoLean == null
+        ? null
+        : gradedScoreOneSided(
+            metrics.torsoLean - baseline.torsoLean,
+            0.05,
+            0.25,
+            +1,
+          ),
     spine:
       metrics.spineLean == null
         ? null
@@ -281,12 +352,13 @@ export function scorePosture(metrics, baseline = DEFAULT_BASELINE) {
 
   // Weights sum to 1 when all metrics available; renormalised otherwise.
   const weights = {
-    neck: 0.2,
-    head: 0.25,
-    shoulders: 0.15,
-    hunch: 0.15,
-    spine: 0.15,
-    symmetry: 0.1,
+    neck: 0.18,
+    head: 0.22,
+    shoulders: 0.13,
+    hunch: 0.12,
+    back: 0.15,
+    spine: 0.12,
+    symmetry: 0.08,
   };
 
   let total = 0;
@@ -337,9 +409,15 @@ export function scorePosture(metrics, baseline = DEFAULT_BASELINE) {
       severity: subs.hunch < 55 ? "bad" : "warn",
       metric: "hunch",
       message:
-        metrics.shoulderHunch < baseline.shoulderHunch
-          ? "Shoulders are creeping up toward your ears — drop and relax them."
-          : "Back is overextended — ease your shoulders down naturally.",
+        "Shoulders are creeping up toward your ears — drop and relax them.",
+    });
+  }
+  if (subs.back != null && subs.back < 80) {
+    feedback.push({
+      severity: subs.back < 55 ? "bad" : "warn",
+      metric: "back",
+      message:
+        "You're leaning in toward the screen — sit back and let the chair support you.",
     });
   }
   if (subs.spine != null && subs.spine < 80) {

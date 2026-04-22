@@ -35,6 +35,7 @@ export default function PoseCoach({ onSessionSaved }) {
     headPitch: makeEMA(0.3),
     shoulderTilt: makeEMA(0.3),
     shoulderHunch: makeEMA(0.3),
+    torsoLean: makeEMA(0.2),
     spineLean: makeEMA(0.3),
   });
 
@@ -168,6 +169,10 @@ export default function PoseCoach({ onSessionSaved }) {
             : metricEMAsRef.current.headPitch(rawMetrics.headPitch) ?? rawMetrics.headPitch,
         shoulderTilt: metricEMAsRef.current.shoulderTilt(rawMetrics.shoulderTilt) ?? rawMetrics.shoulderTilt,
         shoulderHunch: metricEMAsRef.current.shoulderHunch(rawMetrics.shoulderHunch) ?? rawMetrics.shoulderHunch,
+        torsoLean:
+          rawMetrics.torsoLean == null
+            ? null
+            : metricEMAsRef.current.torsoLean(rawMetrics.torsoLean) ?? rawMetrics.torsoLean,
         spineLean:
           rawMetrics.spineLean == null
             ? null
@@ -351,6 +356,10 @@ function drawSkeleton(ctx, canvas, landmarks, score) {
     ctx.fill();
   }
 
+  // Face framing + chin line. Makes it obvious where the app is reading
+  // head pitch and lets the user correlate what they see with the score.
+  drawFaceOverlay(ctx, canvas, landmarks, color);
+
   // Draw guide line: shoulder-midpoint vertical.
   const lSh = landmarks[LM.LEFT_SHOULDER];
   const rSh = landmarks[LM.RIGHT_SHOULDER];
@@ -365,6 +374,161 @@ function drawSkeleton(ctx, canvas, landmarks, score) {
     ctx.stroke();
     ctx.setLineDash([]);
   }
+}
+
+/**
+ * Draws a face "frame" on the canvas:
+ *   - A rounded rectangle around the face, aligned to the ear line so
+ *     the user can see the app's idea of head orientation.
+ *   - A horizontal line across the ears (the "pitch horizon").
+ *   - A dot on the nose.
+ *   - A short chin line below the mouth, showing the head-pitch axis.
+ * Everything scales with the distance between the ears so it looks
+ * right whether the user is close to or far from the camera.
+ */
+function drawFaceOverlay(ctx, canvas, landmarks, color) {
+  const lEar = landmarks[LM.LEFT_EAR];
+  const rEar = landmarks[LM.RIGHT_EAR];
+  const nose = landmarks[LM.NOSE];
+  const mouthL = landmarks[LM.MOUTH_LEFT];
+  const mouthR = landmarks[LM.MOUTH_RIGHT];
+  if (!lEar || !rEar) return;
+  if ((lEar.visibility ?? 0) < 0.3 || (rEar.visibility ?? 0) < 0.3) return;
+
+  const W = canvas.width;
+  const H = canvas.height;
+
+  const toPx = (p) => ({ x: p.x * W, y: p.y * H });
+  const lEarP = toPx(lEar);
+  const rEarP = toPx(rEar);
+  const earMidP = { x: (lEarP.x + rEarP.x) / 2, y: (lEarP.y + rEarP.y) / 2 };
+
+  // Work in a local frame where +X runs along the ear line and +Y is
+  // perpendicular to it ("down the face"). That way the face frame
+  // stays aligned when the user tilts their head sideways.
+  const dx = rEarP.x - lEarP.x;
+  const dy = rEarP.y - lEarP.y;
+  const earDistPx = Math.hypot(dx, dy);
+  if (earDistPx < 8) return; // degenerate
+  const ux = dx / earDistPx; // unit vector along ear line
+  const uy = dy / earDistPx;
+  const nx = -uy; // unit vector perpendicular ("down the face")
+  const ny = ux;
+
+  // Rectangle dimensions, expressed as multiples of ear distance.
+  const halfW = earDistPx * 0.9;  // slightly wider than the ears
+  const topH = earDistPx * 0.6;   // from ear line up to crown
+  const bottomH = earDistPx * 1.1; // from ear line down past the chin
+  const radius = earDistPx * 0.25;
+
+  const corners = [
+    // top-left (in local space)
+    { s: -halfW, t: -topH },
+    { s:  halfW, t: -topH },
+    { s:  halfW, t:  bottomH },
+    { s: -halfW, t:  bottomH },
+  ].map(({ s, t }) => ({
+    x: earMidP.x + s * ux + t * nx,
+    y: earMidP.y + s * uy + t * ny,
+  }));
+
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.85;
+  roundedPolygon(ctx, corners, radius);
+  ctx.stroke();
+
+  // Ear-line horizon across the rectangle.
+  ctx.strokeStyle = "rgba(255,255,255,0.5)";
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(earMidP.x - halfW * ux, earMidP.y - halfW * uy);
+  ctx.lineTo(earMidP.x + halfW * ux, earMidP.y + halfW * uy);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Nose dot.
+  if ((nose?.visibility ?? 0) >= 0.3) {
+    const noseP = toPx(nose);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(noseP.x, noseP.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Chin line: from ear-midpoint to nose, extended down to the chin
+    // region. Visualises the head-pitch axis so the user can see what
+    // the metric is actually measuring.
+    const axisX = noseP.x - earMidP.x;
+    const axisY = noseP.y - earMidP.y;
+    const axisLen = Math.hypot(axisX, axisY);
+    if (axisLen > 4) {
+      const extend = earDistPx * 0.9; // push past the mouth toward the chin
+      const ex = noseP.x + (axisX / axisLen) * extend;
+      const ey = noseP.y + (axisY / axisLen) * extend;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(earMidP.x, earMidP.y);
+      ctx.lineTo(noseP.x, noseP.y);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+
+      // Small chin tick perpendicular to the axis at its end.
+      const tick = earDistPx * 0.35;
+      const px = -axisY / axisLen;
+      const py = axisX / axisLen;
+      ctx.beginPath();
+      ctx.moveTo(ex - px * tick, ey - py * tick);
+      ctx.lineTo(ex + px * tick, ey + py * tick);
+      ctx.stroke();
+    }
+  }
+
+  // Mouth dots (purely cosmetic – shows the framing is anchored on the
+  // face, not floating).
+  for (const m of [mouthL, mouthR]) {
+    if ((m?.visibility ?? 0) < 0.3) continue;
+    const p = toPx(m);
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Stroke a rounded rectangle defined by four corners (in order). Works
+ * for any convex quad, not just axis-aligned rectangles, so our face
+ * frame can tilt with the head.
+ */
+function roundedPolygon(ctx, pts, radius) {
+  const n = pts.length;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const prev = pts[(i + n - 1) % n];
+    const curr = pts[i];
+    const next = pts[(i + 1) % n];
+
+    const v1x = prev.x - curr.x;
+    const v1y = prev.y - curr.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    const l1 = Math.hypot(v1x, v1y);
+    const l2 = Math.hypot(v2x, v2y);
+    const r = Math.min(radius, l1 / 2, l2 / 2);
+
+    const p1 = { x: curr.x + (v1x / l1) * r, y: curr.y + (v1y / l1) * r };
+    const p2 = { x: curr.x + (v2x / l2) * r, y: curr.y + (v2y / l2) * r };
+
+    if (i === 0) ctx.moveTo(p1.x, p1.y);
+    else ctx.lineTo(p1.x, p1.y);
+    ctx.quadraticCurveTo(curr.x, curr.y, p2.x, p2.y);
+  }
+  ctx.closePath();
 }
 
 // ---------- audio alert -------------------------------------------
