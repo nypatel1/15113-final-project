@@ -7,6 +7,7 @@ const METRIC_LABELS = {
   head: "Head pitch",
   shoulders: "Shoulder level",
   hunch: "Shoulder hunch",
+  back: "Back / lean",
   spine: "Spine lean",
   symmetry: "L/R symmetry",
 };
@@ -57,6 +58,10 @@ export default function FeedbackPanel({ metrics, subs, feedback }) {
         <MetricRow
           label="Neck / shoulder"
           value={fmt(metrics.shoulderHunch, "x")}
+        />
+        <MetricRow
+          label="Torso lean"
+          value={metrics.torsoLean == null ? "—" : fmt(metrics.torsoLean, "")}
         />
         <MetricRow
           label="Spine lean"

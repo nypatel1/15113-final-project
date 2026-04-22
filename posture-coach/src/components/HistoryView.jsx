@@ -48,7 +48,7 @@ export default function HistoryView({ sessions, onCleared }) {
   }, [sorted]);
 
   const metricAverages = useMemo(() => {
-    const keys = ["neck", "head", "shoulders", "hunch", "spine", "symmetry"];
+    const keys = ["neck", "head", "shoulders", "hunch", "back", "spine", "symmetry"];
     const totals = Object.fromEntries(keys.map((k) => [k, 0]));
     const counts = Object.fromEntries(keys.map((k) => [k, 0]));
     for (const s of sorted) {
