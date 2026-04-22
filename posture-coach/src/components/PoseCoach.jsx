@@ -32,6 +32,7 @@ export default function PoseCoach({ onSessionSaved }) {
   const scoreEMARef = useRef(makeEMA(0.25));
   const metricEMAsRef = useRef({
     neckTilt: makeEMA(0.3),
+    headPitch: makeEMA(0.3),
     shoulderTilt: makeEMA(0.3),
     shoulderHunch: makeEMA(0.3),
     spineLean: makeEMA(0.3),
@@ -161,6 +162,10 @@ export default function PoseCoach({ onSessionSaved }) {
       const smoothedMetrics = {
         ...rawMetrics,
         neckTilt: metricEMAsRef.current.neckTilt(rawMetrics.neckTilt) ?? rawMetrics.neckTilt,
+        headPitch:
+          rawMetrics.headPitch == null
+            ? null
+            : metricEMAsRef.current.headPitch(rawMetrics.headPitch) ?? rawMetrics.headPitch,
         shoulderTilt: metricEMAsRef.current.shoulderTilt(rawMetrics.shoulderTilt) ?? rawMetrics.shoulderTilt,
         shoulderHunch: metricEMAsRef.current.shoulderHunch(rawMetrics.shoulderHunch) ?? rawMetrics.shoulderHunch,
         spineLean:

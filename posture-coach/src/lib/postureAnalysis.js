@@ -16,6 +16,10 @@
  * Metrics produced:
  *   - neckTilt        : forward-head angle (deg). 0 ≈ ear directly
  *                       above shoulder, positive ≈ head pushed forward.
+ *   - headPitch       : vertical offset of the nose below the ear line,
+ *                       normalised by ear distance. Larger ≈ chin tucked
+ *                       down, smaller/negative ≈ chin lifted. This is
+ *                       what catches "head nodded forward onto chest".
  *   - shoulderTilt    : roll of the shoulder line vs. horizontal (deg).
  *                       0 ≈ shoulders level.
  *   - shoulderHunch   : vertical distance ear→shoulder, normalised by
@@ -29,15 +33,19 @@
  * the final value so you can easily re-prioritise what matters.
  *
  * MediaPipe Pose Landmarker indices (the ones we care about):
- *   7  = left ear      8  = right ear
+ *   0  = nose          7  = left ear      8  = right ear
+ *   9  = mouth left    10 = mouth right
  *   11 = left shoulder 12 = right shoulder
  *   23 = left hip      24 = right hip
  * -------------------------------------------------------------
  */
 
 export const LM = {
+  NOSE: 0,
   LEFT_EAR: 7,
   RIGHT_EAR: 8,
+  MOUTH_LEFT: 9,
+  MOUTH_RIGHT: 10,
   LEFT_SHOULDER: 11,
   RIGHT_SHOULDER: 12,
   LEFT_HIP: 23,
@@ -97,6 +105,9 @@ export function hasEnoughLandmarks(landmarks) {
  * when hips aren't confidently visible.
  */
 export function computeMetrics(landmarks) {
+  const nose = landmarks[LM.NOSE];
+  const mouthL = landmarks[LM.MOUTH_LEFT];
+  const mouthR = landmarks[LM.MOUTH_RIGHT];
   const lEar = landmarks[LM.LEFT_EAR];
   const rEar = landmarks[LM.RIGHT_EAR];
   const lSh = landmarks[LM.LEFT_SHOULDER];
@@ -108,10 +119,39 @@ export function computeMetrics(landmarks) {
   const shMid = mid(lSh, rSh);
 
   const shoulderWidth = Math.max(len(sub(lSh, rSh)), 1e-6);
+  const earDistance = Math.max(len(sub(lEar, rEar)), 1e-6);
 
   // Vector from shoulder midpoint to ear midpoint.
   const neckVec = sub(earMid, shMid);
   const neckTilt = angleFromVertical(neckVec);
+
+  // --- Head pitch (NEW) --------------------------------------------
+  // When you look straight ahead the nose sits slightly below the line
+  // between the ears (~0.3 of ear distance). When you nod your head
+  // down, the chin goes toward the chest and the nose drops further
+  // below the ear line, so this ratio grows. When you lift your chin
+  // it shrinks or even goes negative.
+  //
+  // Importantly this is independent of forward-head drift: if your
+  // whole head slides forward (ears+nose translate together) the nose
+  // still sits at the same vertical offset below the ear line.
+  // Normalising by ear-distance keeps the ratio scale-invariant, so
+  // the metric survives zooming in/out from the camera.
+  //
+  // The nose is the most reliably tracked face landmark in Pose
+  // Landmarker. We fall back to the mouth midpoint only if the nose
+  // is occluded (e.g. resting a hand on the face).
+  let headPitchAxis = null;
+  if ((nose?.visibility ?? 0) >= MIN_VIS) {
+    headPitchAxis = sub(nose, earMid);
+  } else if (
+    (mouthL?.visibility ?? 0) >= MIN_VIS &&
+    (mouthR?.visibility ?? 0) >= MIN_VIS
+  ) {
+    headPitchAxis = sub(mid(mouthL, mouthR), earMid);
+  }
+  const headPitch =
+    headPitchAxis == null ? null : headPitchAxis.y / earDistance;
 
   // Shoulder roll: line from left to right shoulder vs. horizontal.
   const shVec = sub(rSh, lSh);
@@ -145,6 +185,7 @@ export function computeMetrics(landmarks) {
 
   return {
     neckTilt,         // degrees, 0 = perfect
+    headPitch,        // ratio, ~0.3 = level; larger = chin tucked down
     shoulderTilt,     // degrees, 0 = level
     shoulderHunch,    // ratio, ~0.45 = relaxed
     spineLean,        // degrees or null
@@ -173,6 +214,7 @@ function gradedScore(deviation, tolerance, falloff) {
 
 const DEFAULT_BASELINE = {
   neckTilt: 0,
+  headPitch: 0.3,
   shoulderTilt: 0,
   shoulderHunch: 0.45,
   spineLean: 0,
@@ -184,7 +226,13 @@ const DEFAULT_BASELINE = {
  */
 export function buildBaseline(metricsSamples) {
   if (!metricsSamples.length) return { ...DEFAULT_BASELINE };
-  const keys = ["neckTilt", "shoulderTilt", "shoulderHunch", "spineLean"];
+  const keys = [
+    "neckTilt",
+    "headPitch",
+    "shoulderTilt",
+    "shoulderHunch",
+    "spineLean",
+  ];
   const acc = Object.fromEntries(keys.map((k) => [k, 0]));
   const counts = Object.fromEntries(keys.map((k) => [k, 0]));
   for (const m of metricsSamples) {
@@ -210,6 +258,10 @@ export function buildBaseline(metricsSamples) {
 export function scorePosture(metrics, baseline = DEFAULT_BASELINE) {
   const subs = {
     neck: gradedScore(metrics.neckTilt - baseline.neckTilt, 5, 25),
+    head:
+      metrics.headPitch == null
+        ? null
+        : gradedScore(metrics.headPitch - baseline.headPitch, 0.05, 0.25),
     shoulders: gradedScore(
       metrics.shoulderTilt - baseline.shoulderTilt,
       3,
@@ -229,9 +281,10 @@ export function scorePosture(metrics, baseline = DEFAULT_BASELINE) {
 
   // Weights sum to 1 when all metrics available; renormalised otherwise.
   const weights = {
-    neck: 0.35,
-    shoulders: 0.2,
-    hunch: 0.2,
+    neck: 0.2,
+    head: 0.25,
+    shoulders: 0.15,
+    hunch: 0.15,
     spine: 0.15,
     symmetry: 0.1,
   };
@@ -256,6 +309,17 @@ export function scorePosture(metrics, baseline = DEFAULT_BASELINE) {
         metrics.neckTilt - baseline.neckTilt > 0
           ? "Head is pushed forward — pull your chin back over your shoulders."
           : "Head is leaning back — relax your neck.",
+    });
+  }
+  if (subs.head != null && subs.head < 80) {
+    const delta = metrics.headPitch - baseline.headPitch;
+    feedback.push({
+      severity: subs.head < 55 ? "bad" : "warn",
+      metric: "head",
+      message:
+        delta > 0
+          ? "Chin is tucked down — lift your head so your eyes are level."
+          : "Chin is lifted — bring your head back to a neutral, level gaze.",
     });
   }
   if (subs.shoulders < 80) {

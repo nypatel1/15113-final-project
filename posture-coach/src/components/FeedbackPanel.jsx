@@ -3,7 +3,8 @@
  */
 
 const METRIC_LABELS = {
-  neck: "Neck / head",
+  neck: "Forward head",
+  head: "Head pitch",
   shoulders: "Shoulder level",
   hunch: "Shoulder hunch",
   spine: "Spine lean",
@@ -45,6 +46,10 @@ export default function FeedbackPanel({ metrics, subs, feedback }) {
 
       <div className="raw-metrics">
         <MetricRow label="Neck tilt" value={fmt(metrics.neckTilt, "°")} />
+        <MetricRow
+          label="Head pitch"
+          value={metrics.headPitch == null ? "—" : fmt(metrics.headPitch, "")}
+        />
         <MetricRow
           label="Shoulder tilt"
           value={fmt(metrics.shoulderTilt, "°")}

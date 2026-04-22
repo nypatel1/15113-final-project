@@ -66,7 +66,8 @@ src/
 
 1. **Landmark gate.** Reject frames where key joints (ears, shoulders) are below `visibility` 0.5 so we never score garbage frames.
 2. **Raw metrics.**
-   - `neckTilt` – angle between the shoulder-midpoint→ear-midpoint vector and vertical. 0° is ideal; positive values mean forward head.
+   - `neckTilt` – angle between the shoulder-midpoint→ear-midpoint vector and vertical. 0° is ideal; positive values mean forward head (ears ahead of shoulders).
+   - `headPitch` – nose-vs-ear-line vertical offset, normalised by ear distance. ~0.3 is a level gaze; larger means the chin is tucked down toward the chest, smaller/negative means the chin is lifted. This is independent of `neckTilt`: your whole head can drift forward without the nose moving relative to the ears, and you can nod down without the ears leaving the shoulder line.
    - `shoulderTilt` – angle of the left→right shoulder line vs. horizontal. 0° is level.
    - `shoulderHunch` – ratio of neck length to shoulder width. Shrugged shoulders compress this ratio.
    - `spineLean` – angle of the hip-mid→shoulder-mid vector vs. vertical (only when hips are visible; skipped for typical seated webcam framing).
