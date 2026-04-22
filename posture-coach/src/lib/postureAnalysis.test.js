@@ -129,14 +129,55 @@ test("chin tucked down lowers the head-pitch sub-score", () => {
   );
 });
 
-test("chin lifted raises different head-pitch feedback", () => {
+test("small chin lift keeps a perfect head sub-score", () => {
+  // Lift the nose ~0.05 of ear-distance above the neutral offset – a
+  // slight upward gaze. This should be well within the generous
+  // "chin up" tolerance and not drop the head sub-score at all.
+  const slightlyUp = neutralPose({ noseDy: -0.005 });
+  const m = computeMetrics(slightlyUp);
+  const { subs, feedback } = scorePosture(m, DEFAULT_BASELINE);
+  assert.ok(
+    m.headPitch < DEFAULT_BASELINE.headPitch,
+    `expected slightly-lifted chin to reduce headPitch, got ${m.headPitch}`,
+  );
+  assert.equal(
+    subs.head,
+    100,
+    `expected slight chin lift to keep head sub-score at 100, got ${subs.head}`,
+  );
+  assert.ok(
+    !feedback.some((f) => f.metric === "head"),
+    `did not expect head feedback for slight lift, got ${JSON.stringify(feedback)}`,
+  );
+});
+
+test("extreme chin lift still triggers lifted-chin feedback", () => {
+  // noseDy = -0.08 means the nose sits ~0.08 of ear-distance HIGHER
+  // than a neutral gaze. That's well past the negTolerance of 0.12
+  // scaled to ear-distance, so scoring should still flag it.
   const lifted = neutralPose({ noseDy: -0.08 });
   const m = computeMetrics(lifted);
   const { subs, feedback } = scorePosture(m, DEFAULT_BASELINE);
   assert.ok(m.headPitch < DEFAULT_BASELINE.headPitch - 0.05);
-  assert.ok(subs.head < 70);
+  assert.ok(
+    subs.head < 80,
+    `expected extreme chin lift to lower head sub-score, got ${subs.head}`,
+  );
   assert.ok(
     feedback.some((f) => f.metric === "head" && /lifted/i.test(f.message)),
+  );
+});
+
+test("chin-down penalty is tighter than chin-up penalty", () => {
+  // Same magnitude of deviation, opposite directions – "chin down"
+  // should score lower (be penalised more) than "chin up".
+  const down = computeMetrics(neutralPose({ noseDy: 0.04 }));
+  const up = computeMetrics(neutralPose({ noseDy: -0.04 }));
+  const scoreDown = scorePosture(down, DEFAULT_BASELINE).subs.head;
+  const scoreUp = scorePosture(up, DEFAULT_BASELINE).subs.head;
+  assert.ok(
+    scoreUp > scoreDown,
+    `expected chin-up sub-score (${scoreUp}) to be greater than chin-down (${scoreDown})`,
   );
 });
 

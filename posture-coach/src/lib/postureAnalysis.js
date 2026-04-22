@@ -210,6 +210,30 @@ function gradedScore(deviation, tolerance, falloff) {
   return Math.max(0, Math.round(100 * Math.exp(-t * t)));
 }
 
+/**
+ * Asymmetric variant of `gradedScore`. Applies independent tolerance /
+ * falloff pairs for positive vs. negative deviation. Useful for metrics
+ * where one direction is significantly worse than the other – e.g.
+ * nodding DOWN (chin tucked toward chest) is the real ergonomic
+ * problem, while a slightly upward chin is fine or even good (suggests
+ * the monitor is at or above eye-level).
+ */
+function gradedScoreAsymmetric(
+  deviation,
+  posTolerance,
+  posFalloff,
+  negTolerance,
+  negFalloff,
+) {
+  const absDev = Math.abs(deviation);
+  const tolerance = deviation >= 0 ? posTolerance : negTolerance;
+  const falloff = deviation >= 0 ? posFalloff : negFalloff;
+  const d = Math.max(0, absDev - tolerance);
+  if (d === 0) return 100;
+  const t = d / (falloff - tolerance);
+  return Math.max(0, Math.round(100 * Math.exp(-t * t)));
+}
+
 // ---------- calibration-aware scoring ---------------------------
 
 const DEFAULT_BASELINE = {
@@ -258,10 +282,21 @@ export function buildBaseline(metricsSamples) {
 export function scorePosture(metrics, baseline = DEFAULT_BASELINE) {
   const subs = {
     neck: gradedScore(metrics.neckTilt - baseline.neckTilt, 5, 25),
+    // Asymmetric: tucking the chin DOWN (positive delta) is the
+    // ergonomic problem and is penalised tightly. Lifting the chin a
+    // little (negative delta) is fine – often it just means the
+    // monitor is at eye-level – so we give that direction a much
+    // wider tolerance before penalising, and a gentler falloff.
     head:
       metrics.headPitch == null
         ? null
-        : gradedScore(metrics.headPitch - baseline.headPitch, 0.05, 0.25),
+        : gradedScoreAsymmetric(
+            metrics.headPitch - baseline.headPitch,
+            0.05, // posTolerance (chin down)
+            0.25, // posFalloff
+            0.12, // negTolerance (chin up — generous)
+            0.40, // negFalloff
+          ),
     shoulders: gradedScore(
       metrics.shoulderTilt - baseline.shoulderTilt,
       3,
