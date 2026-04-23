@@ -22,8 +22,11 @@
  *                       what catches "head nodded forward onto chest".
  *   - shoulderTilt    : roll of the shoulder line vs. horizontal (deg).
  *                       0 ≈ shoulders level.
- *   - shoulderHunch   : vertical distance ear→shoulder, normalised by
- *                       shoulder width. Smaller = shoulders shrugged up.
+ *   - shoulderHunch   : ear→shoulder distance normalised by shoulder
+ *                       width. Smaller = shoulders shrugged up. Only
+ *                       *compression* vs baseline is penalised at
+ *                       scoring time – a longer neck than baseline just
+ *                       means the user relaxed, which is a good thing.
  *   - spineLean       : tilt of the torso (hip→shoulder) vs. vertical.
  *   - symmetry        : 0..1, 1 = perfectly symmetric left/right heights.
  *
@@ -210,6 +213,24 @@ function gradedScore(deviation, tolerance, falloff) {
   return Math.max(0, Math.round(100 * Math.exp(-t * t)));
 }
 
+/**
+ * One-sided version of `gradedScore`. Only penalises deviation in the
+ * given direction:
+ *   sign = +1 → penalise `deviation > tolerance`
+ *   sign = -1 → penalise `deviation < -tolerance`
+ * Drift in the opposite direction always scores 100. Useful for metrics
+ * where drift in one direction means "better posture" – e.g. a longer
+ * neck than baseline means the user relaxed their shoulders, not that
+ * anything got worse.
+ */
+function gradedScoreOneSided(deviation, tolerance, falloff, sign = 1) {
+  const signed = sign * deviation;
+  if (signed <= tolerance) return 100;
+  const d = signed - tolerance;
+  const t = d / (falloff - tolerance);
+  return Math.max(0, Math.round(100 * Math.exp(-t * t)));
+}
+
 // ---------- calibration-aware scoring ---------------------------
 
 const DEFAULT_BASELINE = {
@@ -267,10 +288,15 @@ export function scorePosture(metrics, baseline = DEFAULT_BASELINE) {
       3,
       15,
     ),
-    hunch: gradedScore(
+    // One-sided: only penalise the neck getting SHORTER than baseline
+    // (shoulders creeping up toward the ears). A longer neck than
+    // baseline just means the user relaxed their shoulders down, which
+    // is the direction we want – it should never lose points.
+    hunch: gradedScoreOneSided(
       metrics.shoulderHunch - baseline.shoulderHunch,
       0.05,
       0.25,
+      -1,
     ),
     spine:
       metrics.spineLean == null
@@ -337,9 +363,7 @@ export function scorePosture(metrics, baseline = DEFAULT_BASELINE) {
       severity: subs.hunch < 55 ? "bad" : "warn",
       metric: "hunch",
       message:
-        metrics.shoulderHunch < baseline.shoulderHunch
-          ? "Shoulders are creeping up toward your ears — drop and relax them."
-          : "Back is overextended — ease your shoulders down naturally.",
+        "Shoulders are creeping up toward your ears — drop and relax them.",
     });
   }
   if (subs.spine != null && subs.spine < 80) {

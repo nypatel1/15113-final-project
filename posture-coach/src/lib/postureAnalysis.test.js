@@ -155,3 +155,42 @@ test("level head + forward head are independently distinguishable", () => {
     `neckTilt should be stable under head-pitch only, got ${tuckedOnly.neckTilt}`,
   );
 });
+
+test("relaxed shoulders (longer neck than baseline) never lose hunch points", () => {
+  // Calibrate with a slightly-shrugged posture (short neck).
+  const shrugged = computeMetrics(
+    neutralPose({ neckLen: 0.08, shoulderWidth: 0.26 }),
+  );
+  const baseline = buildBaseline([shrugged, shrugged, shrugged]);
+
+  // Then relax: neck gets longer relative to baseline.
+  const relaxed = computeMetrics(
+    neutralPose({ neckLen: 0.14, shoulderWidth: 0.26 }),
+  );
+  const { subs, feedback } = scorePosture(relaxed, baseline);
+  assert.equal(
+    subs.hunch,
+    100,
+    `expected relaxed shoulders to keep hunch at 100, got ${subs.hunch}`,
+  );
+  assert.ok(
+    !feedback.some((f) => f.metric === "hunch"),
+    `expected no hunch feedback when shoulders are relaxed, got ${JSON.stringify(feedback)}`,
+  );
+});
+
+test("shrugged shoulders (shorter neck than baseline) are still penalised", () => {
+  // Force the neck to be much shorter than DEFAULT_BASELINE.shoulderHunch (0.45).
+  const shrugged = computeMetrics(
+    neutralPose({ neckLen: 0.04, shoulderWidth: 0.26 }),
+  );
+  const { subs, feedback } = scorePosture(shrugged, DEFAULT_BASELINE);
+  assert.ok(
+    subs.hunch < 70,
+    `expected shrugged hunch sub-score to be low, got ${subs.hunch}`,
+  );
+  assert.ok(
+    feedback.some((f) => f.metric === "hunch" && /creeping up/i.test(f.message)),
+    `expected "creeping up" feedback, got ${JSON.stringify(feedback)}`,
+  );
+});
