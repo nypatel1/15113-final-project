@@ -9,8 +9,8 @@ A browser-based posture coach that watches you through your webcam, scores your 
 ## What it does
 
 - **Live pose tracking** – MediaPipe Pose Landmarker (run in-browser via WebAssembly + GPU delegate) produces 33 body landmarks per frame.
-- **Posture analysis engine** – a small, readable JS module turns those landmarks into interpretable metrics (neck tilt, shoulder level, hunch, spine lean, symmetry) and combines them into a single 0–100 posture score.
-- **Real-time feedback** – scores update on every frame and a skeleton overlay is drawn on top of the video. Actionable tips appear as the score drops ("head is pushed forward", "level your shoulders", etc.) and an optional audio alert fires after a sustained slouch.
+- **Posture analysis engine** – a small, readable JS module turns those landmarks into six interpretable metrics (forward head, head pitch, shoulder level, shoulder hunch, spine lean, symmetry) and combines them into a single 0–100 posture score.
+- **Real-time feedback** – scores update on every frame and a skeleton overlay is drawn on top of the video. Actionable tips appear as the score drops ("head is pushed forward", "chin is tucked down", "level your shoulders", etc.) and an optional audio alert fires after a sustained slouch.
 - **Calibration** – a 4-second "sit up straight" capture builds your personal baseline so the coach scores you against *your* neutral pose, not a generic model.
 - **Session history** – each run saves a lightweight time-series to `localStorage`. The History tab shows session-level trends, a timeline of your most recent session, average sub-scores, and CSV export.
 
@@ -74,7 +74,7 @@ src/
    - `symmetry` – how close the left/right shoulder and hip heights are (scaled to shoulder width).
 3. **Calibration.** Averaging metrics over a short window produces a per-user baseline. Every deviation is measured relative to that baseline, so the score adapts to your body geometry and camera angle.
 4. **Sub-scores.** Each metric gets a 0–100 sub-score via a Gaussian-like penalty curve `gradedScore(deviation, tolerance, falloff)`. Below `tolerance` = perfect, beyond `falloff` = near-zero.
-5. **Combined score.** Weighted average (neck 35%, shoulders 20%, hunch 20%, spine 15%, symmetry 10%), renormalised when a metric is missing.
+5. **Combined score.** Weighted average (head 25%, neck 20%, shoulders 15%, hunch 15%, spine 15%, symmetry 10%), renormalised when a metric is missing.
 6. **Smoothing.** Scores and metrics flow through exponential moving averages so the UI doesn't flicker frame-to-frame.
 7. **Feedback.** Rules inspect each sub-score and emit at most one targeted tip per metric.
 
