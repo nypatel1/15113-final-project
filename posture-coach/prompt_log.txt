@@ -1,148 +1,189 @@
-Posture Coach — prompt / development log
-=========================================
+AI Posture Coach — prompt / development log
+============================================
 
-This log captures the iterative prompts and decisions that shaped the
-project. It is not a verbatim chat transcript; it is a summary of the
-intent behind each major step so the workflow is reproducible.
+This is an intent-level record of how the project was built, not a
+verbatim chat transcript. Each entry is the gist of a prompt I gave
+to a Cursor cloud agent (Claude, same agentic pattern as HW8), the
+resulting PR, and any follow-ups from me after reviewing the diff.
 
---------------------------------------------------------------------
-Iteration 1 — Scoping
---------------------------------------------------------------------
-Prompt: "Read SPEC.md. Decide on the minimum viable feature set that
-satisfies every bullet in Functional Requirements (webcam, pose
-detection, analysis engine, feedback, persistence, visualization) and
-picks at least two of the optional enhancements. Produce a plan."
+Workflow: each change got its own feature branch → commit → push →
+PR → CI (lint + node --test + build) → I merged on GitHub. That kept
+the unit of work at the PR level so bad ideas could be reverted with
+one click.
 
-Decisions taken:
-- Stack: React 19 + Vite 8 (fast iteration, modern), MediaPipe Pose
-  Landmarker via @mediapipe/tasks-vision (runs WASM + GPU delegate in
-  the browser, no backend), Recharts for charts, localStorage for
-  persistence.
-- Optional enhancements: calibration, CSV export, audio alerts on
-  slouch — all of which are natural extensions of the core metrics
-  and feel like features a real user would ask for within minutes of
-  using the app.
+------------------------------------------------------------
+Pre-PR — Scoping the build
+------------------------------------------------------------
+Used Claude (browser chat) to turn the open-ended assignment spec
+into SPEC.md: functional requirements, data flow, guiding principles.
+No code yet. The goal was to have a document I could point the
+agent at so every later prompt could be "narrow, scoped, one thing".
 
---------------------------------------------------------------------
-Iteration 2 — Analysis engine first
---------------------------------------------------------------------
-Prompt: "Before touching any UI, write the posture analysis module
-(src/lib/postureAnalysis.js). It should be self-contained, heavily
-commented, and unit testable without a DOM. Derive metrics directly
-from MediaPipe's normalized landmark coords (x,y,z,visibility).
-Produce (1) per-metric geometric values, (2) per-metric 0-100
-sub-scores, (3) one combined 0-100 score, (4) a small list of
-actionable feedback strings. Support user-specific calibration."
+------------------------------------------------------------
+PR #1 — Initial build (merged)
+------------------------------------------------------------
+Prompt: "Read SPEC.md. Scaffold a Vite + React 19 app under
+posture-coach/. Build it in modular slices:
 
-Refinements during this iteration:
-- Flip image-y when computing angles from vertical so "up" is intuitive.
-- Add hasEnoughLandmarks() gate so downstream UI can distinguish
-  "no pose yet" from "bad posture".
-- Use a smooth exp(-t^2) penalty curve — linear penalties looked too
-  "binary" in early manual testing with synthetic landmark data.
-- Renormalise score weights when a metric (spineLean) is null so the
-  scale stays 0..100 for seated users whose hips are off-camera.
-- Export makeEMA() so both the UI and any future callers can smooth
-  in a consistent way.
+  1. Core posture analysis engine as a dependency-free JS module with
+     unit tests against synthetic landmark data (no DOM required).
+  2. A MediaPipe Pose Landmarker wrapper so the rest of the app never
+     has to care which model is underneath.
+  3. The React UI: webcam + canvas overlay + metric bars + tips.
+  4. localStorage persistence with a capped session schema.
+  5. History tab with Recharts line and bar views + CSV export.
 
---------------------------------------------------------------------
-Iteration 3 — Pose detection wrapper
---------------------------------------------------------------------
-Prompt: "Wrap MediaPipe PoseLandmarker in a tiny factory that hides the
-fileset-resolver + model-loading ceremony. The rest of the app should
-only have to call `await createPoseDetector()` and then `detect(video,
-timestamp)` each frame. Pin the model to the 'lite' float16 variant —
-quality is plenty for an upper-body posture app and it starts fast."
+Pick 'lite' float16 model (fast startup, enough quality for upper-body
+posture). Use a smooth exp(-t^2) penalty curve for sub-scores so the
+score doesn't feel binary. Renormalise weights when a metric is null
+so seated users (hips off-camera) still get a 0-100 scale. Commit
+each slice separately."
 
---------------------------------------------------------------------
-Iteration 4 — Webcam loop + overlay
---------------------------------------------------------------------
-Prompt: "Write PoseCoach.jsx. Start/stop controls, request webcam,
-requestAnimationFrame loop that calls the detector, draws the
-skeleton on a canvas overlay with the colour keyed to the current
-score, and updates three pieces of React state: live score, metrics,
-feedback. Sample the score into the active session at ~1 Hz."
+What landed: 6 commits (spec + README, scaffold, analysis engine +
+tests, detector + store, UI, docs). 7/7 tests pass.
 
-Issues caught and fixed:
-- Mirror the video horizontally (transform: scaleX(-1)) because users
-  expect their left hand to appear on the left.
-- Don't sample every frame — metric arrays would explode. 1 Hz keeps
-  a one-hour session well under 4 KB of JSON.
-- The landmarker must receive a monotonically increasing timestamp
-  (performance.now()) or it throws in VIDEO mode.
+Review notes I caught on the diff:
+- Mirror the video horizontally (transform: scaleX(-1)) so left/right
+  matches the user's body.
+- Sample into sessions at 1 Hz, not every frame — 60 Hz metric arrays
+  would blow localStorage inside an hour.
+- PoseLandmarker in VIDEO mode needs a monotonic timestamp
+  (performance.now()), or it throws.
 
---------------------------------------------------------------------
-Iteration 5 — Feedback panel
---------------------------------------------------------------------
-Prompt: "Make the per-metric breakdown unmissable. Five bars (neck,
-shoulders, hunch, spine, symmetry) colour-coded good/ok/bad, plus a
-small raw-metrics grid showing the underlying angles so power users
-can see what the score is reacting to. Below that, render the current
-feedback messages with a matching severity stripe."
+------------------------------------------------------------
+PR #2 — GitHub Pages deploy workflow (merged)
+------------------------------------------------------------
+Prompt: "Add a GitHub Actions workflow that on every push to main:
+installs deps, lints, runs npm test, builds with
+VITE_BASE_PATH=/<repo-name>/, copies index.html -> 404.html (SPA
+fallback), adds .nojekyll, uploads via actions/upload-pages-artifact
+and deploys via actions/deploy-pages. Also make vite.config.js read
+VITE_BASE_PATH from env, defaulting to '/'. Docs in the README."
 
---------------------------------------------------------------------
-Iteration 6 — Calibration
---------------------------------------------------------------------
-Prompt: "Add a Calibrate button. For 4 seconds, collect every smoothed
-metric sample into a buffer, then buildBaseline() to average them,
-then use the result as the reference point for subsequent scoring.
-Show a progress banner during calibration so it doesn't feel frozen."
+------------------------------------------------------------
+PR #3 — Fix CI lint (merged)
+------------------------------------------------------------
+CI failed on PR #2's merge: `process is not defined` in
+vite.config.js because the ESLint config only declared browser
+globals. Prompt: "Add an ESLint override block that gives Node
+globals to vite.config.js, eslint.config.js, and **/*.test.js. Don't
+touch anything else." One-line fix.
 
---------------------------------------------------------------------
-Iteration 7 — Persistence + History view
---------------------------------------------------------------------
-Prompt: "Design the smallest possible localStorage schema that can
-produce the charts we want. Sessions are a flat array; each session
-has id, startedAt, endedAt, duration, avgScore, samples[]. Cap at 50
-sessions and 3600 samples (1 h at 1 Hz) so we never blow quota."
+------------------------------------------------------------
+PR #4 — Head pitch metric (merged)
+------------------------------------------------------------
+Bug I found while using the live site: the score chip stayed yellow
+when I sat upright and turned *green* when I tucked my chin to my
+chest. Asked the agent to diagnose before fixing.
 
-Then: "Build HistoryView.jsx with three charts – avg score per
-session (line), latest session timeline (multi-line: score + neck +
-shoulders + hunch), and average sub-scores all-time (bar). Add
-Export CSV and Clear history buttons."
+Diagnosis: the existing `neckTilt` metric only measures ears-vs-
+shoulders (forward-head drift). When you nod your chin to your chest
+your head pivots at the neck — the ears barely move, sometimes drift
+slightly back — so the metric read "less forward head = better", the
+opposite of the truth.
 
---------------------------------------------------------------------
-Iteration 8 — Polish + QoL
---------------------------------------------------------------------
-Prompts:
-- "Add an audio alert on sustained slouch. Use WebAudio, no external
-  asset. Only trigger after ~1s of score<55 and rate-limit to every
-  8s so it's not annoying."
-- "Dark, minimal UI. Use CSS custom properties. The app should look
-  good at 1440×900 and still work down to mobile width (single
-  column, controls wrap)."
-- "Favicon: tiny SVG stick figure with the accent gradient."
+Prompt: "Add a headPitch metric using the nose and mouth face
+landmarks. Definition: (nose.y - earMidpoint.y) / |leftEar - rightEar|.
+~0.3 = level gaze, larger = chin tucked down, smaller/negative = chin
+lifted. Independent of neckTilt by construction (whole-head
+translation moves ears and nose together). Fall back to mouth
+midpoint when the nose is occluded. Add it to buildBaseline,
+scorePosture, the feedback rules, the FeedbackPanel row, the
+HistoryView bar chart, and the PoseCoach EMA smoother. Write tests
+that (a) assert chin-tuck lowers the sub-score with a 'tucked'
+message, (b) chin-lift produces a 'lifted' message, (c) headPitch is
+stable under forward-head-only translation and neckTilt is stable
+under chin-tuck-only translation (independence test)."
 
---------------------------------------------------------------------
-Iteration 9 — Tests + lint
---------------------------------------------------------------------
-Prompt: "Write synthetic landmark helpers (neutralPose) and assert
-that (a) a neutral pose scores ~100, (b) a forward-head pose drops
-the neck sub-score, (c) tilted shoulders produce a 'shoulders' tip,
-(d) calibrating on a slouched pose restores the score to ~100.
-Run `node --test` + `npm run lint` and fix everything they flag."
+Went from 7/7 tests → 10/10.
 
-Fixes made after linting:
-- Replace useEffect(() => setState(load()), []) with lazy useState
-  initialiser in App.jsx.
-- Capture videoRef.current inside the effect body before returning
-  the cleanup (react-hooks/exhaustive-deps).
-- Remove unused `score` prop from FeedbackPanel's signature.
+------------------------------------------------------------
+PR #5 — Torso lean + face overlay (merged, then reverted in PR #6)
+------------------------------------------------------------
+Two reports at once:
 
---------------------------------------------------------------------
-Iteration 10 — Documentation
---------------------------------------------------------------------
-Prompt: "Write README.md covering: what the app does, tech stack,
-quick start, project layout, and – most importantly – a clear
-explanation of the posture-analysis approach that a reviewer could
-follow end-to-end. Add a privacy note; this is all client-side and
-that's a genuine selling point. Also keep a prompt_log.txt (this
-file) showing the iterative workflow."
+  (a) "If I'm leaning super far ahead the score can be green, but
+      when I sit back with good posture it goes yellow."
+  (b) "Can you draw lines on the chin or frame the face?"
 
---------------------------------------------------------------------
-Verification pass
---------------------------------------------------------------------
-- `npm run lint` → clean.
-- `npm run build` → passes (one expected chunk-size warning from
-  MediaPipe + Recharts; code-splitting is a nice follow-up).
-- `npm run test` → 7/7 pass.
+Prompt: "Fix (a) by adding a torsoLean metric from the z-coordinate
+of the shoulders (MediaPipe z grows toward the camera), normalised by
+shoulder width. Also switch shoulderHunch to one-sided (only penalise
+compression, not relaxation). Add a face-framing overlay anchored on
+the ear line (rounded rectangle, dashed ear horizon, nose dot, chin
+line extending from ear midpoint through nose to a perpendicular
+tick). Everything scales by ear distance. Add tests for both."
+
+14/14 tests passed. Shipped it.
+
+Result in practice: felt worse to use. User said "it's bad now,
+revert". Honest lesson: this PR bundled three unrelated changes
+(new metric + penalty change + UI overlay). If any one of them was
+wrong, the whole thing had to go. Smaller PRs from this point on.
+
+------------------------------------------------------------
+PR #6 — Revert PR #5 (merged)
+------------------------------------------------------------
+Prompt: "git revert -m 1 of PR #5's merge commit. Pure revert, no
+extra changes. Verify the code is byte-identical to the tip of PR #4
+afterwards (10/10 tests, not 14/14)."
+
+------------------------------------------------------------
+PR #7 — One-sided shoulder hunch (open, draft)
+------------------------------------------------------------
+Report: "The shoulder hunch doesn't work well, I have to squeeze my
+shoulders very high for it to improve."
+
+Root cause: gradedScore takes Math.abs(deviation), so a longer-than-
+baseline neck was penalised just as hard as a shorter one. Longer
+neck actually means *relaxed shoulders*, which is what we want; the
+only way to satisfy the metric was to shrug up.
+
+Prompt: "Add a gradedScoreOneSided(deviation, tolerance, falloff,
+sign) helper. Switch `hunch` to use it with sign=-1 so only neck
+compression loses points. Simplify the hunch feedback message (the
+'back is overextended' branch can no longer fire). Do not touch any
+other metric. Add tests: relaxed shoulders (longer neck) stays at
+100 with no feedback; shrugged shoulders (shorter neck) still drops
+the sub-score and produces the 'creeping up' message."
+
+Surgical: touches only postureAnalysis.js and its test file.
+12/12 tests.
+
+------------------------------------------------------------
+PR #8 — Asymmetric head-pitch tolerance (open, draft)
+------------------------------------------------------------
+Report: "The head positioning is a little sensitive up-down. I should
+be able to still move my head up a little and it should be green."
+
+Root cause: the `head` sub-score used a single symmetric tolerance
+for both chin-up and chin-down. But chin-down (tucked toward chest)
+is the real ergonomic problem, while chin-up a little usually just
+means the monitor is at eye-level. The penalty shouldn't be the
+same size on both sides.
+
+Prompt: "Add a gradedScoreAsymmetric(deviation, posTolerance,
+posFalloff, negTolerance, negFalloff) helper. Use it for the `head`
+sub-score with (0.05, 0.25, 0.12, 0.40) — unchanged strict
+penalty for chin-down, 2.4x wider dead zone for chin-up with a
+gentler falloff. Add three tests: small chin lift keeps sub-score at
+100, extreme chin lift still flagged, and same magnitude of chin-up
+vs chin-down scores higher for chin-up."
+
+------------------------------------------------------------
+Meta-strategies that worked
+------------------------------------------------------------
+1. Spec before code. Having SPEC.md let every later prompt be a
+   narrow "change one thing" instead of "build the app".
+2. Analysis engine before UI. Made the interesting math testable in
+   isolation — no webcam required to verify scoring.
+3. AI as reviewer, not just typist. "What's wrong with this approach"
+   and "explain the bug before you fix it" produced much better
+   results than "add feature X". PR #4 started as a diagnosis
+   request, not a feature request.
+4. Small PRs with scope statements. Every post-#1 prompt explicitly
+   said "don't touch anything else". When I broke that rule (PR #5),
+   I shipped a bad change I couldn't tune — only revert.
+5. Tests as regression pins. Every bug-fix PR after #4 added a test
+   that would have caught the bug. That grew the suite from 7 → 10
+   → 12 entries organically.
