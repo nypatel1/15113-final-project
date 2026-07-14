@@ -1,4 +1,4 @@
-# Wave cluster jobs — Viking sparse RGB reconstruction
+# Wave cluster jobs — testmodel sparse RGB reconstruction
 
 Copy this folder into your model repo (`testmodel/`) on the cluster, or sync the scripts next to `train.py`.
 
@@ -36,15 +36,15 @@ scontrol show job <jobid> | tr ' ' '\n' | grep -E 'Partition|NumCPUs|MinMemory|T
 ```bash
 rsync -avP --exclude outputs --exclude runs --exclude '__pycache__' --exclude '.git' \
   /Users/nikeshpatel/testmodel/ \
-  nypatel@wave.lan.cmu.edu:~/viking-sparse/
+  nypatel@wave.lan.cmu.edu:~/testmodel/
 
-rsync -avP wave-cluster/ nypatel@wave.lan.cmu.edu:~/viking-sparse/wave-cluster/
+rsync -avP wave-cluster/ nypatel@wave.lan.cmu.edu:~/testmodel/wave-cluster/
 ```
 
 On the cluster:
 
 ```
-~/viking-sparse/
+~/testmodel/
   train.py dataset.py model.py losses.py metrics.py eval.py ...
   requirements.txt
   screenshots/              # 942 PNGs — training only
@@ -58,10 +58,10 @@ On the cluster:
 
 ```bash
 ssh nypatel@wave.lan.cmu.edu
-cd ~/viking-sparse
+cd ~/testmodel
 
-conda create -n viking python=3.11 -y
-conda activate viking
+conda create -n testmodel python=3.11 -y
+conda activate testmodel
 pip install -r requirements.txt
 ```
 
@@ -75,7 +75,7 @@ pip install -r requirements.txt
 | Held-out eval | `batch` | 1 | 2 | 16G | `scripts/eval_heldout.sbatch` |
 
 ```bash
-cd ~/viking-sparse
+cd ~/testmodel
 mkdir -p logs outputs runs
 
 JOB=$(sbatch --parsable wave-cluster/scripts/smoke.sbatch)
@@ -110,8 +110,8 @@ scancel <jobid>
 On the login node (no GPU, not inside the training job):
 
 ```bash
-cd ~/viking-sparse
-conda activate viking
+cd ~/testmodel
+conda activate testmodel
 tensorboard --logdir runs --host 127.0.0.1 --port 6006
 ```
 

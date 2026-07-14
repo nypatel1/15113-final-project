@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=viking_smoke
+#SBATCH --job-name=testmodel_smoke
 #SBATCH --partition=dev
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -13,7 +13,7 @@
 # Tiny run: confirm CUDA + data. ALWAYS set --mem/--cpus-per-task explicitly
 # (omitting --mem on Wave can request ~1.5TB and drain/hang a node).
 set -euo pipefail
-cd "${SLURM_SUBMIT_DIR:-$HOME/viking-sparse}"
+cd "${SLURM_SUBMIT_DIR:-$HOME/testmodel}"
 mkdir -p logs outputs runs
 
 echo "host=$(hostname) job=$SLURM_JOB_ID start=$(date -Is)"
@@ -24,7 +24,7 @@ echo "SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-unset} SLURM_MEM_PER_NODE=${SLU
 
 # shellcheck disable=SC1091
 source ~/.bashrc 2>/dev/null || true
-conda activate viking
+conda activate testmodel
 
 python - <<'PY'
 import torch
