@@ -2,18 +2,46 @@
 
 Copy this folder into your model repo (`testmodel/`) on the cluster, or sync the scripts next to `train.py`.
 
-## What to sync from your laptop
+## Critical: always set `--mem` and `--cpus-per-task`
 
-From your machine (`/Users/nikeshpatel/testmodel`):
+Wave does **not** bill or hard-cap bad requests. Omitting `--mem` can default to something like **~1.5TB RAM + 1 CPU**, which can drain a node or hang forever (this already happened with a hello-world job).
+
+Every script here sets **all** of these explicitly:
+
+| Flag | Value in these scripts | Why |
+|------|------------------------|-----|
+| `--gres=gpu:1` | exactly 1 | never more |
+| `--nodes=1` | 1 | single node |
+| `--ntasks=1` | 1 | one process |
+| `--cpus-per-task` | 2–4 | small dataloader footprint |
+| `--mem` | 16G / 24G | host RAM; never omit |
+| `--partition` | `dev` or `batch` | GPU jobs; use `cpu` only for CPU-only work |
+
+After every submit, verify immediately:
 
 ```bash
-# code + data only (~5.1 GB images). Skip local outputs/ and runs/.
+JOB=$(sbatch --parsable wave-cluster/scripts/smoke.sbatch)
+bash wave-cluster/scripts/verify_job.sh "$JOB"
+# If mem/GPUs look wrong: scancel $JOB
+```
+
+Or by hand:
+
+```bash
+scontrol show job <jobid> | tr ' ' '\n' | grep -E 'Partition|NumCPUs|MinMemory|TRES|Gres|TimeLimit'
+```
+
+## What to sync from your laptop
+
+```bash
 rsync -avP --exclude outputs --exclude runs --exclude '__pycache__' --exclude '.git' \
   /Users/nikeshpatel/testmodel/ \
   nypatel@wave.lan.cmu.edu:~/viking-sparse/
+
+rsync -avP wave-cluster/ nypatel@wave.lan.cmu.edu:~/viking-sparse/wave-cluster/
 ```
 
-On the cluster you want:
+On the cluster:
 
 ```
 ~/viking-sparse/
@@ -21,7 +49,7 @@ On the cluster you want:
   requirements.txt
   screenshots/              # 942 PNGs — training only
   screenshots_heldout/      # 105 PNGs — final test only
-  wave-cluster/             # these scripts (optional location)
+  wave-cluster/
 ```
 
 **Never** point `--source_dir` at `screenshots_heldout` for training.
@@ -32,48 +60,54 @@ On the cluster you want:
 ssh nypatel@wave.lan.cmu.edu
 cd ~/viking-sparse
 
-# Conda or venv — pick one. Example with conda:
 conda create -n viking python=3.11 -y
 conda activate viking
 pip install -r requirements.txt
-
-# Confirm CUDA sees a GPU only inside a job (login node may show all GPUs —
-# still do not train on the login node without sbatch/slreserve).
 ```
 
-Data lives under `$HOME` → `/data0`. ~5 GB is fine there for this project. No need to split across `/data1` unless you grow the dataset a lot.
+## Run order (minimal resources)
 
-## Run order (conscientious)
-
-| Step | Partition | GPUs | Script |
-|------|-----------|------|--------|
-| Smoke test (~2 min) | `dev` | 1 | `scripts/smoke.sbatch` |
-| L1 baseline (~30 epochs) | `batch` | 1 | `scripts/train_l1.sbatch` |
-| L1 + LPIPS | `batch` | 1 | `scripts/train_lpips.sbatch` |
-| Held-out eval | `batch` or `dev` | 1 | `scripts/eval_heldout.sbatch` |
-
-One GPU each. Do not use `dev` for the full 30-epoch runs.
+| Step | Partition | GPUs | CPUs | RAM | Script |
+|------|-----------|------|------|-----|--------|
+| Smoke (~10 min) | `dev` | 1 | 2 | 16G | `scripts/smoke.sbatch` |
+| L1 baseline | `batch` | 1 | 4 | 24G | `scripts/train_l1.sbatch` |
+| L1 + LPIPS | `batch` | 1 | 4 | 24G | `scripts/train_lpips.sbatch` |
+| Held-out eval | `batch` | 1 | 2 | 16G | `scripts/eval_heldout.sbatch` |
 
 ```bash
 cd ~/viking-sparse
 mkdir -p logs outputs runs
 
-sbatch wave-cluster/scripts/smoke.sbatch          # verify first
-sbatch wave-cluster/scripts/train_l1.sbatch       # after smoke looks good
-sbatch wave-cluster/scripts/train_lpips.sbatch    # can queue behind L1
-sbatch wave-cluster/scripts/eval_heldout.sbatch   # after checkpoints exist
+JOB=$(sbatch --parsable wave-cluster/scripts/smoke.sbatch)
+bash wave-cluster/scripts/verify_job.sh "$JOB"
+# wait for smoke to finish and look good, then:
+
+JOB=$(sbatch --parsable wave-cluster/scripts/train_l1.sbatch)
+bash wave-cluster/scripts/verify_job.sh "$JOB"
+
+JOB=$(sbatch --parsable wave-cluster/scripts/train_lpips.sbatch)
+bash wave-cluster/scripts/verify_job.sh "$JOB"
 ```
+
+Do **not** use `dev` for the full 30-epoch runs. Do **not** use the `cpu` partition for these GPU jobs.
 
 Monitor:
 
 ```bash
 squeue -u $USER
+tail -f logs/smoke_*.out
 tail -f logs/train_l1_*.out
+```
+
+Cancel immediately if something is wrong:
+
+```bash
+scancel <jobid>
 ```
 
 ## TensorBoard
 
-Training writes under `runs/`. On the **login node** (separate from the training job):
+On the login node (no GPU, not inside the training job):
 
 ```bash
 cd ~/viking-sparse
@@ -81,22 +115,23 @@ conda activate viking
 tensorboard --logdir runs --host 127.0.0.1 --port 6006
 ```
 
-On your laptop:
+Laptop:
 
 ```bash
 ssh -L 6006:127.0.0.1:6006 nypatel@wave.lan.cmu.edu
 ```
 
-Open http://localhost:6006 — you should see `v2_sparse10_l1` / `v2_sparse10_lpips` once events exist.
+→ http://localhost:6006
 
-## Resource notes (RTX PRO 6000)
+## Resource rules of thumb
 
-- Default scripts: `--gres=gpu:1`, `--cpus-per-task=8`, `--mem=64G`, `--batch_size 32`
-- If VRAM allows and GPU util is low, try `--batch_size 64` in the sbatch script
-- Weekdays 9am–5pm: `batch` may queue with reason `QOSGrpGRES` (14/16 GPUs for batch). Overnight/weekend often starts faster
-- Respect `$CUDA_VISIBLE_DEVICES` — scripts never hardcode GPU IDs
-- Cancel leftovers: `scancel <jobid>`
+- **Always** set `--mem` and `--cpus-per-task` — Wave will not stop a bad request
+- **Exactly** `--gres=gpu:1` for these jobs
+- Partitions: `dev` = short/interactive; `batch` = unattended GPU training; `cpu` = CPU-only
+- Weekdays 9–5: `batch` may show `QOSGrpGRES` (14/16 GPUs for batch) — wait, don’t inflate the request
+- Respect `$CUDA_VISIBLE_DEVICES`; never hardcode GPU IDs
+- If the job OOMs on host RAM, bump `--mem` to `32G` — not to hundreds of GB
 
 ## Eval must match training width
 
-Both train scripts use `--base_channels 64`. Eval uses the same. Do not load a width-64 checkpoint with `--base_channels 32`.
+Train + eval use `--base_channels 64`. Do not mix with old width-32 checkpoints.

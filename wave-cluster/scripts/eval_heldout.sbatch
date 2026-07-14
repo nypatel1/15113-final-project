@@ -1,21 +1,25 @@
 #!/bin/bash
 #SBATCH --job-name=viking_eval
 #SBATCH --partition=batch
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
-#SBATCH --time=02:00:00
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=16G
+#SBATCH --time=01:00:00
 #SBATCH --output=logs/eval_heldout_%j.out
 #SBATCH --error=logs/eval_heldout_%j.err
 
-# Held-out full-image eval — advisor step 3. Never used for training.
+# Held-out full-image eval. 1 GPU, small CPU/RAM footprint.
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$HOME/viking-sparse}"
 mkdir -p logs outputs
 
 echo "host=$(hostname) job=$SLURM_JOB_ID start=$(date -Is)"
+echo "partition=${SLURM_JOB_PARTITION:-?} gres=gpu:1 ntasks=1 cpus=2 mem=16G"
 echo "SLURM_JOB_GPUS=${SLURM_JOB_GPUS:-unset}"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+echo "SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-unset} SLURM_MEM_PER_NODE=${SLURM_MEM_PER_NODE:-unset}"
 
 # shellcheck disable=SC1091
 source ~/.bashrc 2>/dev/null || true

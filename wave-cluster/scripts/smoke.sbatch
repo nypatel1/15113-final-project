@@ -1,21 +1,26 @@
 #!/bin/bash
 #SBATCH --job-name=viking_smoke
 #SBATCH --partition=dev
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=16G
 #SBATCH --time=00:10:00
 #SBATCH --output=logs/smoke_%j.out
 #SBATCH --error=logs/smoke_%j.err
 
-# Tiny run: confirm CUDA, data path, and one training step before spending a GPU-day.
+# Tiny run: confirm CUDA + data. ALWAYS set --mem/--cpus-per-task explicitly
+# (omitting --mem on Wave can request ~1.5TB and drain/hang a node).
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$HOME/viking-sparse}"
 mkdir -p logs outputs runs
 
 echo "host=$(hostname) job=$SLURM_JOB_ID start=$(date -Is)"
+echo "partition=${SLURM_JOB_PARTITION:-?} gres=gpu:1 ntasks=1 cpus=2 mem=16G"
 echo "SLURM_JOB_GPUS=${SLURM_JOB_GPUS:-unset}"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+echo "SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-unset} SLURM_MEM_PER_NODE=${SLURM_MEM_PER_NODE:-unset}"
 
 # shellcheck disable=SC1091
 source ~/.bashrc 2>/dev/null || true
@@ -26,6 +31,7 @@ import torch
 print("torch", torch.__version__, "cuda", torch.cuda.is_available())
 if torch.cuda.is_available():
     print("device", torch.cuda.get_device_name(0), "count", torch.cuda.device_count())
+    assert torch.cuda.device_count() == 1, "expected exactly 1 visible GPU"
 PY
 
 python -u train.py \
