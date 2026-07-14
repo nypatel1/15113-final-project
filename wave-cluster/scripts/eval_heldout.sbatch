@@ -22,8 +22,7 @@ echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
 echo "SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-unset} SLURM_MEM_PER_NODE=${SLURM_MEM_PER_NODE:-unset}"
 
 # shellcheck disable=SC1091
-source ~/.bashrc 2>/dev/null || true
-conda activate testmodel
+source "$PWD/.venv/bin/activate"
 
 python -u eval.py \
   --model outputs/v2_sparse10_l1/model_final.pt \

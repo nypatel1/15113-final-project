@@ -9,7 +9,7 @@ Training jobs write event files under `runs/` on the shared filesystem (`$HOME` 
 ```bash
 ssh nypatel@wave.lan.cmu.edu
 cd ~/testmodel
-conda activate testmodel
+source .venv/bin/activate
 tensorboard --logdir runs --host 127.0.0.1 --port 6006
 ```
 

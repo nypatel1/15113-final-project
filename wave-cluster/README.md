@@ -60,10 +60,15 @@ On the cluster:
 ssh nypatel@wave.lan.cmu.edu
 cd ~/testmodel
 
-conda create -n testmodel python=3.11 -y
-conda activate testmodel
-pip install -r requirements.txt
+# No system conda on Wave — install uv in $HOME, then a project venv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"
+uv venv --python 3.11 .venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
 ```
+
+Create `.venv` **on the cluster** only. Do not rsync a Mac `.venv`.
 
 ## Run order (minimal resources)
 
@@ -111,7 +116,7 @@ On the login node (no GPU, not inside the training job):
 
 ```bash
 cd ~/testmodel
-conda activate testmodel
+source .venv/bin/activate
 tensorboard --logdir runs --host 127.0.0.1 --port 6006
 ```
 
