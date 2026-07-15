@@ -74,27 +74,25 @@ Create `.venv` **on the cluster** only. Do not rsync a Mac `.venv`.
 
 | Step | Partition | GPUs | CPUs | RAM | Script |
 |------|-----------|------|------|-----|--------|
-| Smoke (~10 min) | `dev` | 1 | 2 | 16G | `scripts/smoke.sbatch` |
-| L1 baseline | `batch` | 1 | 4 | 24G | `scripts/train_l1.sbatch` |
-| L1 + LPIPS | `batch` | 1 | 4 | 24G | `scripts/train_lpips.sbatch` |
+| Precompute crops | `cpu` | 0 | 4 | 16G | `scripts/precompute.sbatch` |
+| L1 + LPIPS (precomputed) | `batch` | 1 | 4 | 24G | `scripts/train_lpips.sbatch` |
+| L1 baseline (optional) | `batch` | 1 | 4 | 24G | `scripts/train_l1.sbatch` |
 | Held-out eval | `batch` | 1 | 2 | 16G | `scripts/eval_heldout.sbatch` |
 
 ```bash
 cd ~/testmodel
 mkdir -p logs outputs runs
 
-JOB=$(sbatch --parsable wave-cluster/scripts/smoke.sbatch)
-bash wave-cluster/scripts/verify_job.sh "$JOB"
-# wait for smoke to finish and look good, then:
+# 1) CPU-only crop cache (~1.5GB under data/crops_npz)
+JOB=$(sbatch --parsable wave-cluster/scripts/precompute.sbatch)
+# verify: Partition=cpu, NO gpu, mem=16G, cpus=4
 
-JOB=$(sbatch --parsable wave-cluster/scripts/train_l1.sbatch)
-bash wave-cluster/scripts/verify_job.sh "$JOB"
-
+# 2) after precompute finishes:
 JOB=$(sbatch --parsable wave-cluster/scripts/train_lpips.sbatch)
-bash wave-cluster/scripts/verify_job.sh "$JOB"
+# verify: Partition=batch, gres/gpu=1, mem=24G, cpus=4
 ```
 
-Do **not** use `dev` for the full 30-epoch runs. Do **not** use the `cpu` partition for these GPU jobs.
+Do **not** use `dev` for the full 30-epoch runs. Precompute uses **`cpu`** (no GPU). Training uses **`batch`**.
 
 Monitor:
 
